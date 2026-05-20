@@ -1,0 +1,53 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: beautytrack-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      DATABASE_URL: sqlite:////app/data/beautytrack.db
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      PUBLIC_CLINIC_SLUG: ${PUBLIC_CLINIC_SLUG:-demo-clinic}
+      CANCELLATION_HOURS_BEFORE: ${CANCELLATION_HOURS_BEFORE:-24}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DEFAULT_CHAT_ID: ${TELEGRAM_DEFAULT_CHAT_ID:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+    volumes:
+      - backend-data:/app/data
+      - backend-uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: beautytrack-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/tsconfig.app.json:/app/tsconfig.app.json
+      - ./frontend/tsconfig.node.json:/app/tsconfig.node.json
+
+volumes:
+  backend-data:
+  backend-uploads:

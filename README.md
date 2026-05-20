@@ -1,13 +1,54 @@
+# Запускать
+1)
+```bash
+docker compose up --build
+```
+2) http://localhost:5173
+
+
+
+
+
+
+
+
+
+---
+
 # BeautyTrack MVP
 
 CRM для косметологов: клиенты и фото визитов, онлайн-запись, база уходовых средств с подбором и PDF, роли (админ / врач / клиент), демо-уведомления (Telegram / SMS).
 
 ## Требования
 
-- Python 3.9+
-- Node.js 20+
+- Python 3.9+ и Node.js 20+ (для локального запуска)
+- или Docker 20.10+ с Docker Compose v2 (для запуска одной командой)
 
-## Быстрый старт
+## Запуск через Docker (рекомендуется)
+
+```bash
+docker compose up --build
+```
+
+Эта команда соберёт образы и запустит оба сервиса:
+
+- Backend (FastAPI): http://localhost:8000 — Swagger: http://localhost:8000/docs
+- Frontend (Vite): http://localhost:5173
+
+Данные SQLite и загруженные фото визитов сохраняются в именованных Docker-томах (`backend-data`, `backend-uploads`) и переживают перезапуск контейнеров. Остановить: `docker compose down`. Полностью сбросить данные: `docker compose down -v`.
+
+### Доступ с другого ПК в той же сети
+
+По умолчанию фронтенд обращается к API по `http://localhost:8000`. Чтобы открыть приложение с другого устройства в локальной сети, создайте `.env` рядом с `docker-compose.yml`:
+
+```bash
+VITE_API_URL=http://<IP-хоста>:8000/api/v1
+CORS_ORIGINS=http://<IP-хоста>:5173
+```
+
+и перезапустите: `docker compose up --build`.
+
+## Быстрый старт (без Docker)
 
 ### Backend
 
