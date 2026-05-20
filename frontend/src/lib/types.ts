@@ -103,3 +103,40 @@ export interface CarePlan {
   notes: string | null
   items: CarePlanItem[]
 }
+
+export interface DashboardSeriesPoint {
+  date: string
+  count: number
+}
+
+export interface Dashboard {
+  appointments_week: number
+  cancellations_week: number
+  clients_total: number
+  revenue_placeholder: number
+  series_7d: DashboardSeriesPoint[]
+}
+
+export interface DashboardScheduleItem {
+  id: number
+  start_at: string
+  end_at: string
+  procedure_name: string
+  client_full_name: string | null
+  status: string
+}
+
+export interface RecentVisit {
+  visit_id: number
+  client_id: number
+  client_full_name: string
+  visit_date: string
+  first_photo_url: string | null
+}
+
+export interface UpcomingBirthday {
+  client_id: number
+  full_name: string
+  birth_date: string
+  days_until: number
+}

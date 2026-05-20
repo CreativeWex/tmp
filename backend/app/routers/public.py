@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import secrets
+import time
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -10,11 +12,14 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models import Appointment, AppointmentStatus, ClinicSettings, Procedure, User, UserRole
-from app.schemas import ClinicPublicOut, DoctorScheduleOut, ProcedureOut, PublicBookIn, PublicBookOut, SlotOut
+from app.schemas import ClinicPublicOut, DoctorScheduleOut, OtpSendIn, OtpSendOut, ProcedureOut, PublicBookIn, PublicBookOut, SlotOut
 from app.services.notifications import send_sms, send_telegram
 from app.services.slots import get_free_slots
 
 router = APIRouter(prefix="/public", tags=["public"])
+
+# phone -> (code, expires_at_unix)
+_otp_store: dict[str, tuple[str, float]] = {}
 
 
 def _get_clinic_by_slug(db: Session, slug: str) -> ClinicSettings:
@@ -35,6 +40,15 @@ def _assert_change_allowed(ap: Appointment, clinic: Optional[ClinicSettings]) ->
     limit = ap.start_at - timedelta(hours=hours)
     if datetime.utcnow() > limit:
         raise HTTPException(status_code=400, detail="Изменение недоступно: прошёл допустимый срок")
+
+
+@router.post("/otp/send", response_model=OtpSendOut)
+async def otp_send(body: OtpSendIn) -> OtpSendOut:
+    code = str(secrets.randbelow(1_000_000)).zfill(6)
+    _otp_store[body.phone] = (code, time.time() + 300)
+    result = await send_sms(body.phone, f"Ваш код подтверждения BeautyTrack: {code}")
+    dev_code = code if result.get("mode") == "mock" else None
+    return OtpSendOut(ok=True, dev_code=dev_code)
 
 
 @router.get("/clinics/{slug}", response_model=ClinicPublicOut)
@@ -69,6 +83,11 @@ def public_slots(
 
 @router.post("/clinics/{slug}/book", response_model=PublicBookOut)
 async def public_book(slug: str, body: PublicBookIn, db: Session = Depends(get_db)) -> PublicBookOut:
+    entry = _otp_store.get(body.guest_phone)
+    if not entry or entry[0] != body.otp_code or time.time() > entry[1]:
+        raise HTTPException(status_code=400, detail="Неверный или устаревший код подтверждения")
+    del _otp_store[body.guest_phone]
+
     clinic = _get_clinic_by_slug(db, slug)
     proc = db.query(Procedure).filter(Procedure.id == body.procedure_id, Procedure.active.is_(True)).first()
     if not proc:

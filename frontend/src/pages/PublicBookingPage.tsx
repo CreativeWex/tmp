@@ -16,6 +16,9 @@ export default function PublicBookingPage() {
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
+  const [otpSent, setOtpSent] = useState(false)
+  const [otpCode, setOtpCode] = useState('')
+  const [devCode, setDevCode] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [apptId, setApptId] = useState<number | null>(null)
 
@@ -34,6 +37,18 @@ export default function PublicBookingPage() {
     enabled: !!slug && !!doctorId && !!procId,
   })
 
+  const sendOtp = useMutation({
+    mutationFn: () =>
+      apiJson<{ ok: boolean; dev_code?: string }>('/public/otp/send', {
+        method: 'POST',
+        body: JSON.stringify({ phone }),
+      }),
+    onSuccess: (data) => {
+      setOtpSent(true)
+      setDevCode(data.dev_code ?? null)
+    },
+  })
+
   const book = useMutation({
     mutationFn: () =>
       apiJson<{ appointment_id: number; cancellation_token: string }>(`/public/clinics/${slug}/book`, {
@@ -45,6 +60,7 @@ export default function PublicBookingPage() {
           guest_name: name,
           guest_phone: phone,
           guest_email: email.trim() ? email.trim() : null,
+          otp_code: otpCode,
         }),
       }),
   })
@@ -154,12 +170,55 @@ export default function PublicBookingPage() {
               <div className="space-y-3">
                 <div className="space-y-2">
                   <Label>Имя</Label>
-                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Как к вам обращаться" />
+                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Как к вам обращаться" disabled={otpSent} />
                 </div>
                 <div className="space-y-2">
                   <Label>Телефон</Label>
-                  <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+7…" />
+                  <div className="flex gap-2">
+                    <Input
+                      value={phone}
+                      onChange={(e) => { setPhone(e.target.value); setOtpSent(false); setOtpCode(''); setDevCode(null) }}
+                      placeholder="+7…"
+                      disabled={otpSent}
+                      className="flex-1"
+                    />
+                    {!otpSent && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!phone.trim() || !name.trim() || sendOtp.isPending}
+                        onClick={() => sendOtp.mutate()}
+                      >
+                        {sendOtp.isPending ? '…' : 'Отправить код'}
+                      </Button>
+                    )}
+                    {otpSent && (
+                      <Button type="button" variant="outline" onClick={() => { setOtpSent(false); setOtpCode(''); setDevCode(null) }}>
+                        Изменить
+                      </Button>
+                    )}
+                  </div>
+                  {sendOtp.isError ? <p className="text-xs text-red-600">{(sendOtp.error as Error).message}</p> : null}
                 </div>
+
+                {otpSent && (
+                  <div className="space-y-2">
+                    <Label>Код из СМС</Label>
+                    <Input
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value)}
+                      placeholder="123456"
+                      maxLength={6}
+                      inputMode="numeric"
+                    />
+                    {devCode && (
+                      <p className="text-xs text-zinc-400">
+                        Demo-режим: код <span className="font-mono font-semibold text-zinc-600">{devCode}</span>
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <Label>Email (необязательно)</Label>
                   <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
@@ -170,7 +229,7 @@ export default function PublicBookingPage() {
                   </Button>
                   <Button
                     className="flex-1"
-                    disabled={!name.trim() || !phone.trim() || book.isPending}
+                    disabled={!otpSent || !otpCode.trim() || book.isPending}
                     onClick={async () => {
                       const r = await book.mutateAsync()
                       setToken(r.cancellation_token)
@@ -178,22 +237,17 @@ export default function PublicBookingPage() {
                       setStep(4)
                     }}
                   >
-                    Записаться
+                    {book.isPending ? 'Отправка…' : 'Записаться'}
                   </Button>
                 </div>
                 {book.isError ? <p className="text-xs text-red-600">{(book.error as Error).message}</p> : null}
               </div>
             ) : null}
 
-            {step === 4 && token && apptId ? (
-              <div className="space-y-3 text-sm text-zinc-700">
+            {step === 4 ? (
+              <div className="space-y-2 text-sm text-zinc-700">
                 <p className="font-medium text-emerald-700">Вы записаны.</p>
-                <p>
-                  Код управления записью: <code className="rounded bg-zinc-100 px-1">{token}</code>
-                </p>
-                <p className="text-xs text-zinc-500">
-                  Отмена: POST /public/appointments/{apptId}/cancel?token=… · Перенос: PATCH с token и new_start_at (см. API)
-                </p>
+                <p className="text-zinc-500">Ждём вас в назначённое время!</p>
               </div>
             ) : null}
           </CardContent>

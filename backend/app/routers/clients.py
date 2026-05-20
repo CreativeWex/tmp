@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.deps import CurrentUser, DbSession, require_roles
 from app.models import Client, User, UserRole, Visit, VisitPhoto, VisitPhotoKind
-from app.schemas import ClientCreate, ClientOut, ClientUpdate, VisitCreate, VisitOut, VisitPhotoOut
+from app.schemas import ClientCreate, ClientOut, ClientUpdate, VisitCreate, VisitOut, VisitPhotoOut, VisitUpdate
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -66,16 +66,16 @@ def get_client(client_id: int, db: DbSession, user: CurrentUser) -> Client:
     return _get_client(db, user, client_id)
 
 
-@router.patch(
-    "/{client_id}",
-    response_model=ClientOut,
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR))],
-)
+@router.patch("/{client_id}", response_model=ClientOut)
 def update_client(client_id: int, body: ClientUpdate, db: DbSession, user: CurrentUser) -> Client:
     c = _get_client(db, user, client_id)
     if user.role == UserRole.DOCTOR and c.doctor_user_id != user.id:
         raise HTTPException(status_code=403, detail="Нет доступа")
+    if user.role == UserRole.CLIENT and c.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Нет доступа")
     data = body.model_dump(exclude_unset=True)
+    if user.role == UserRole.CLIENT:
+        data.pop("full_name", None)
     if "email" in data and data["email"] is not None:
         data["email"] = str(data["email"])
     for k, v in data.items():
@@ -107,6 +107,63 @@ def create_visit(client_id: int, body: VisitCreate, db: DbSession, user: Current
     db.commit()
     db.refresh(v)
     return v
+
+
+@router.patch(
+    "/{client_id}/visits/{visit_id}",
+    response_model=VisitOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR))],
+)
+def update_visit(
+    client_id: int,
+    visit_id: int,
+    body: VisitUpdate,
+    db: DbSession,
+    user: CurrentUser,
+) -> Visit:
+    _get_client(db, user, client_id)
+    if user.role == UserRole.DOCTOR:
+        c = db.query(Client).filter(Client.id == client_id).first()
+        if c and c.doctor_user_id != user.id:
+            raise HTTPException(status_code=403, detail="Нет доступа")
+    v = db.query(Visit).filter(Visit.id == visit_id, Visit.client_id == client_id).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Визит не найден")
+    data = body.model_dump(exclude_unset=True)
+    for k, val in data.items():
+        setattr(v, k, val)
+    db.commit()
+    db.refresh(v)
+    return v
+
+
+@router.delete(
+    "/{client_id}/visits/{visit_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR))],
+)
+def delete_visit(client_id: int, visit_id: int, db: DbSession, user: CurrentUser) -> None:
+    _get_client(db, user, client_id)
+    if user.role == UserRole.DOCTOR:
+        c = db.query(Client).filter(Client.id == client_id).first()
+        if c and c.doctor_user_id != user.id:
+            raise HTTPException(status_code=403, detail="Нет доступа")
+    v = db.query(Visit).filter(Visit.id == visit_id, Visit.client_id == client_id).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Визит не найден")
+    for ph in list(v.photos):
+        try:
+            fpath = (settings.upload_dir / ph.file_path).resolve()
+            base = settings.upload_dir.resolve()
+            fpath.relative_to(base)
+            if fpath.is_file():
+                fpath.unlink()
+        except (ValueError, OSError):
+            pass
+        db.delete(ph)
+    db.delete(v)
+    db.commit()
+    return None
 
 
 def _photo_url(photo_id: int, visit_id: int, filename: str) -> str:

@@ -29,9 +29,15 @@ export default function Layout() {
               <NavLink to="/app" end className={link}>
                 Обзор
               </NavLink>
-              <NavLink to="/app/clients" className={link}>
-                Клиенты
-              </NavLink>
+              {user?.role === 'admin' || user?.role === 'doctor' ? (
+                <NavLink to="/app/clients" className={link}>
+                  Клиенты
+                </NavLink>
+              ) : (
+                <NavLink to="/app/clients" className={link}>
+                  Моя карточка
+                </NavLink>
+              )}
               <NavLink to="/app/booking" className={link}>
                 Запись
               </NavLink>

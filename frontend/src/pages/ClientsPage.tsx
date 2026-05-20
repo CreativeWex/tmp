@@ -1,19 +1,38 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { apiJson } from '@/lib/api'
 import type { Client } from '@/lib/types'
 import { Button, Card, CardContent, CardHeader, Input, Label } from '@/components/ui'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+
+type SortKey = 'recent' | 'name' | 'visits'
 
 export default function ClientsPage() {
   const qc = useQueryClient()
   const { user } = useAuth()
   const [name, setName] = useState('')
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<SortKey>('recent')
   const q = useQuery({
     queryKey: ['clients'],
     queryFn: () => apiJson<Client[]>('/clients'),
   })
+
+  if (user?.role === 'client') {
+    if (q.isLoading) {
+      return <p className="text-sm text-zinc-500">Загрузка…</p>
+    }
+    const me = q.data?.[0]
+    if (me) return <Navigate to={`/app/clients/${me.id}`} replace />
+    return (
+      <Card>
+        <CardContent className="py-6 text-sm text-zinc-500">
+          Профиль клиента ещё не привязан к учётной записи. Обратитесь к администратору.
+        </CardContent>
+      </Card>
+    )
+  }
   const m = useMutation({
     mutationFn: () =>
       apiJson<Client>('/clients', {
@@ -28,12 +47,40 @@ export default function ClientsPage() {
 
   const canCreate = user?.role === 'admin' || user?.role === 'doctor'
 
+  const filtered = useMemo(() => {
+    const list = q.data ?? []
+    const s = search.trim().toLowerCase()
+    const matched = s
+      ? list.filter((c) => {
+          const hay = [c.full_name, c.phone ?? '', c.email ?? ''].join(' ').toLowerCase()
+          return hay.includes(s)
+        })
+      : list
+    const sorted = [...matched]
+    if (sort === 'name') {
+      sorted.sort((a, b) => a.full_name.localeCompare(b.full_name, 'ru'))
+    } else if (sort === 'recent') {
+      sorted.sort((a, b) => b.id - a.id)
+    } else if (sort === 'visits') {
+      sorted.sort((a, b) => a.full_name.localeCompare(b.full_name, 'ru'))
+    }
+    return sorted
+  }, [q.data, search, sort])
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900">Клиенты</h1>
           <p className="text-sm text-zinc-500">Профили, визиты и фото «до / после»</p>
+        </div>
+        <div className="text-xs text-zinc-500">
+          Всего: <span className="font-semibold text-zinc-700">{q.data?.length ?? 0}</span>
+          {search ? (
+            <>
+              {' '}· Найдено: <span className="font-semibold text-zinc-700">{filtered.length}</span>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -64,9 +111,40 @@ export default function ClientsPage() {
         </Card>
       ) : null}
 
+      <Card>
+        <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-end">
+          <div className="flex-1 space-y-2">
+            <Label htmlFor="search">Поиск</Label>
+            <Input
+              id="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ФИО, телефон или email"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sort">Сортировка</Label>
+            <select
+              id="sort"
+              className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm sm:w-52"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+            >
+              <option value="recent">Сначала новые</option>
+              <option value="name">По алфавиту</option>
+            </select>
+          </div>
+          {search ? (
+            <Button variant="ghost" onClick={() => setSearch('')}>
+              Сбросить
+            </Button>
+          ) : null}
+        </CardContent>
+      </Card>
+
       <div className="grid gap-3">
         {q.isLoading ? <p className="text-sm text-zinc-500">Загрузка…</p> : null}
-        {q.data?.map((c) => (
+        {filtered.map((c) => (
           <Link key={c.id} to={`/app/clients/${c.id}`}>
             <Card className="transition hover:border-brand-200 hover:shadow-md">
               <CardContent className="flex items-center justify-between py-4">
@@ -81,7 +159,11 @@ export default function ClientsPage() {
             </Card>
           </Link>
         ))}
-        {q.data?.length === 0 ? <p className="text-sm text-zinc-500">Клиентов пока нет</p> : null}
+        {!q.isLoading && filtered.length === 0 ? (
+          <p className="text-sm text-zinc-500">
+            {search ? 'Ничего не найдено по вашему запросу' : 'Клиентов пока нет'}
+          </p>
+        ) : null}
       </div>
     </div>
   )

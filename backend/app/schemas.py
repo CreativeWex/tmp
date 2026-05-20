@@ -72,6 +72,11 @@ class VisitCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class VisitUpdate(BaseModel):
+    visit_date: Optional[date] = None
+    notes: Optional[str] = None
+
+
 class VisitOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -130,6 +135,15 @@ class AppointmentCreate(BaseModel):
     start_at: datetime
 
 
+class OtpSendIn(BaseModel):
+    phone: str
+
+
+class OtpSendOut(BaseModel):
+    ok: bool
+    dev_code: Optional[str] = None
+
+
 class PublicBookIn(BaseModel):
     doctor_user_id: int
     procedure_id: int
@@ -137,6 +151,7 @@ class PublicBookIn(BaseModel):
     guest_name: str
     guest_phone: str
     guest_email: Optional[EmailStr] = None
+    otp_code: str
 
 
 class PublicBookOut(BaseModel):
@@ -260,8 +275,38 @@ class ClinicSettingsUpdate(BaseModel):
     cancellation_hours_before: Optional[int] = Field(default=None, ge=2, le=48)
 
 
+class DashboardSeriesPoint(BaseModel):
+    date: str
+    count: int
+
+
 class DashboardOut(BaseModel):
     appointments_week: int
     cancellations_week: int
     clients_total: int
     revenue_placeholder: float = 0.0
+    series_7d: List[DashboardSeriesPoint] = Field(default_factory=list)
+
+
+class DashboardScheduleItemOut(BaseModel):
+    id: int
+    start_at: datetime
+    end_at: datetime
+    procedure_name: str
+    client_full_name: Optional[str] = None
+    status: AppointmentStatus
+
+
+class RecentVisitOut(BaseModel):
+    visit_id: int
+    client_id: int
+    client_full_name: str
+    visit_date: date
+    first_photo_url: Optional[str] = None
+
+
+class UpcomingBirthdayOut(BaseModel):
+    client_id: int
+    full_name: str
+    birth_date: date
+    days_until: int

@@ -48,11 +48,23 @@ def _get_plan(db: Session, user, plan_id: int) -> CarePlan:
 router = APIRouter(tags=["care"])
 
 
-@router.post("/recommendations", response_model=RecommendOut, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR))])
+@router.post("/recommendations", response_model=RecommendOut)
 def recommend(body: RecommendIn, db: DbSession, user: CurrentUser) -> RecommendOut:
     _get_client(db, user, body.client_id)
     items = recommend_top_products(db, body.client_id, body.skin_type, body.concerns, limit=3)
     return RecommendOut(products=[ProductOut.model_validate(p) for p in items])
+
+
+@router.get("/clients/{client_id}/care-plans", response_model=list[CarePlanOut])
+def list_client_care_plans(client_id: int, db: DbSession, user: CurrentUser) -> list[CarePlanOut]:
+    _get_client(db, user, client_id)
+    plans = (
+        db.query(CarePlan)
+        .filter(CarePlan.client_id == client_id)
+        .order_by(CarePlan.id.desc())
+        .all()
+    )
+    return [_serialize_plan(p) for p in plans]
 
 
 @router.post("/care-plans", response_model=CarePlanOut, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR))])
