@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -7,6 +9,12 @@ from app.schemas import LoginIn, RegisterIn, TokenOut, UserOut
 from app.security import create_access_token, get_password_hash, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _normalize_phone(s: str) -> str:
+    s = s.strip()
+    s = re.sub(r'[\s\-\(\)]', '', s)
+    return s
 
 
 @router.post("/login", response_model=TokenOut)
@@ -22,23 +30,47 @@ def login(body: LoginIn, db: DbSession) -> TokenOut:
 def register(body: RegisterIn, db: DbSession) -> TokenOut:
     if db.query(User).filter(User.email == body.email).first():
         raise HTTPException(status_code=400, detail="Email уже занят")
+
+    phone = _normalize_phone(body.phone) if body.phone else None
+
+    if phone:
+        if db.query(User).filter(User.phone == phone).first():
+            raise HTTPException(status_code=409, detail="Телефон уже используется")
+        if db.query(Client).filter(Client.phone == phone).first():
+            raise HTTPException(status_code=409, detail="Телефон уже используется")
+
     user = User(
         email=body.email,
         hashed_password=get_password_hash(body.password),
         full_name=body.full_name,
         role=UserRole.CLIENT,
-        phone=body.phone,
+        phone=phone,
     )
     db.add(user)
     db.flush()
-    client = Client(
-        doctor_user_id=None,
-        user_id=user.id,
-        full_name=body.full_name,
-        phone=body.phone,
-        email=body.email,
-    )
-    db.add(client)
+
+    existing_client = None
+    if phone:
+        existing_client = (
+            db.query(Client).filter(Client.phone == phone, Client.user_id.is_(None)).first()
+        )
+    if not existing_client:
+        existing_client = (
+            db.query(Client).filter(Client.email == body.email, Client.user_id.is_(None)).first()
+        )
+
+    if existing_client:
+        existing_client.user_id = user.id
+    else:
+        client = Client(
+            doctor_user_id=None,
+            user_id=user.id,
+            full_name=body.full_name,
+            phone=phone,
+            email=body.email,
+        )
+        db.add(client)
+
     db.commit()
     db.refresh(user)
     return TokenOut(access_token=create_access_token(sub=user.email))

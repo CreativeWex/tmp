@@ -9,7 +9,8 @@ services:
     environment:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       DATABASE_URL: sqlite:////app/data/beautytrack.db
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      UPLOAD_DIR: /app/uploads
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000}
       PUBLIC_CLINIC_SLUG: ${PUBLIC_CLINIC_SLUG:-demo-clinic}
       CANCELLATION_HOURS_BEFORE: ${CANCELLATION_HOURS_BEFORE:-24}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
@@ -25,7 +26,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 20s
 
   frontend:
     build:
@@ -38,11 +39,12 @@ services:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
       - ./frontend/index.html:/app/index.html
+      - ./frontend/package.json:/app/package.json
       - ./frontend/vite.config.ts:/app/vite.config.ts
       - ./frontend/tsconfig.json:/app/tsconfig.json
       - ./frontend/tsconfig.app.json:/app/tsconfig.app.json

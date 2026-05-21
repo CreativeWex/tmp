@@ -16,6 +16,10 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
+# Создаём директории, которые монтируются как volumes
+RUN mkdir -p /app/data /app/uploads
+
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Применяем миграции и только потом стартуем сервер
+CMD ["sh", "-c", "mkdir -p /app/data /app/uploads && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

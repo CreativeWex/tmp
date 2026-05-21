@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from '@/auth/AuthContext'
+import { ThemeProvider } from '@/lib/ThemeContext'
 import Layout from '@/pages/Layout'
 import LoginPage from '@/pages/LoginPage'
 import DashboardPage from '@/pages/DashboardPage'
@@ -35,6 +36,7 @@ function AdminOnly({ children }: { children: ReactNode }) {
 
 export default function App() {
   return (
+    <ThemeProvider>
     <QueryClientProvider client={qc}>
       <AuthProvider>
         <Routes>
@@ -66,5 +68,6 @@ export default function App() {
         </Routes>
       </AuthProvider>
     </QueryClientProvider>
+    </ThemeProvider>
   )
 }

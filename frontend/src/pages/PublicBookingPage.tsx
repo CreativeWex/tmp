@@ -19,8 +19,6 @@ export default function PublicBookingPage() {
   const [otpSent, setOtpSent] = useState(false)
   const [otpCode, setOtpCode] = useState('')
   const [devCode, setDevCode] = useState<string | null>(null)
-  const [token, setToken] = useState<string | null>(null)
-  const [apptId, setApptId] = useState<number | null>(null)
 
   const clinicQ = useQuery({
     queryKey: ['pub', slug],
@@ -231,9 +229,7 @@ export default function PublicBookingPage() {
                     className="flex-1"
                     disabled={!otpSent || !otpCode.trim() || book.isPending}
                     onClick={async () => {
-                      const r = await book.mutateAsync()
-                      setToken(r.cancellation_token)
-                      setApptId(r.appointment_id)
+                      await book.mutateAsync()
                       setStep(4)
                     }}
                   >

@@ -98,6 +98,8 @@ export interface CarePlan {
   id: number
   client_id: number
   doctor_user_id: number
+  visit_id: number | null
+  visit_date: string | null
   skin_type: string
   concerns: string[]
   notes: string | null
@@ -139,4 +141,25 @@ export interface UpcomingBirthday {
   full_name: string
   birth_date: string
   days_until: number
+}
+
+export interface AnalyticsPoint {
+  date: string
+  count: number
+}
+
+export interface StatusBucket {
+  status: string
+  count: number
+}
+
+export interface ProcedureCount {
+  procedure_id: number
+  name: string
+  count: number
+}
+
+export interface AgeBucket {
+  bucket: string
+  count: number
 }

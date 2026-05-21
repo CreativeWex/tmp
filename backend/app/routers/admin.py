@@ -1,3 +1,4 @@
+import re
 from datetime import date as date_t, datetime, timedelta
 from pathlib import Path
 
@@ -30,6 +31,12 @@ from app.schemas import (
 )
 from app.security import get_password_hash
 
+
+def _normalize_phone(s: str) -> str:
+    s = s.strip()
+    s = re.sub(r'[\s\-\(\)]', '', s)
+    return s
+
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
@@ -44,12 +51,20 @@ def _default_hours() -> list[dict]:
 def create_user(body: AdminUserCreate, db: DbSession) -> UserOut:
     if db.query(User).filter(User.email == body.email).first():
         raise HTTPException(status_code=400, detail="Email занят")
+
+    phone = _normalize_phone(body.phone) if body.phone else None
+    if phone:
+        if db.query(User).filter(User.phone == phone).first():
+            raise HTTPException(status_code=409, detail="Телефон уже используется")
+        if db.query(Client).filter(Client.phone == phone).first():
+            raise HTTPException(status_code=409, detail="Телефон уже используется")
+
     u = User(
         email=body.email,
         hashed_password=get_password_hash(body.password),
         full_name=body.full_name,
         role=body.role,
-        phone=body.phone,
+        phone=phone,
     )
     db.add(u)
     db.flush()
@@ -61,7 +76,7 @@ def create_user(body: AdminUserCreate, db: DbSession) -> UserOut:
                 doctor_user_id=None,
                 user_id=u.id,
                 full_name=body.full_name,
-                phone=body.phone,
+                phone=phone,
                 email=body.email,
             )
         )

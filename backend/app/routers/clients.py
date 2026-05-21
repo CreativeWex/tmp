@@ -1,15 +1,23 @@
+import re
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.deps import CurrentUser, DbSession, require_roles
-from app.models import Client, User, UserRole, Visit, VisitPhoto, VisitPhotoKind
+from app.models import Appointment, CarePlan, Client, User, UserRole, Visit, VisitPhoto, VisitPhotoKind
 from app.schemas import ClientCreate, ClientOut, ClientUpdate, VisitCreate, VisitOut, VisitPhotoOut, VisitUpdate
 
 router = APIRouter(prefix="/clients", tags=["clients"])
+
+
+def _normalize_phone(s: str) -> str:
+    s = s.strip()
+    s = re.sub(r'[\s\-\(\)]', '', s)
+    return s
 
 
 def _can_access_client(db: Session, user: User, client: Client) -> bool:
@@ -31,6 +39,14 @@ def _get_client(db: Session, user: User, client_id: int) -> Client:
     return client
 
 
+@router.get("/me", response_model=ClientOut)
+def get_my_client(db: DbSession, user: CurrentUser) -> Client:
+    client = db.query(Client).filter(Client.user_id == user.id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Профиль клиента не привязан к учётной записи")
+    return client
+
+
 @router.get("", response_model=list[ClientOut])
 def list_clients(db: DbSession, user: CurrentUser) -> list[Client]:
     q = db.query(Client)
@@ -46,17 +62,29 @@ def create_client(body: ClientCreate, db: DbSession, user: CurrentUser) -> Clien
     doc_id = user.id if user.role == UserRole.DOCTOR else None
     if user.role == UserRole.ADMIN:
         doc_id = None
+
+    phone = _normalize_phone(body.phone) if body.phone else None
+
+    if phone:
+        exists = db.query(Client).filter(Client.phone == phone).first()
+        if exists:
+            raise HTTPException(status_code=409, detail="Клиент с таким телефоном уже существует")
+
     c = Client(
         doctor_user_id=doc_id,
         full_name=body.full_name,
         birth_date=body.birth_date,
-        phone=body.phone,
+        phone=phone,
         email=str(body.email) if body.email else None,
         allergies=body.allergies,
         contraindications=body.contraindications,
     )
     db.add(c)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Клиент с таким телефоном уже существует")
     db.refresh(c)
     return c
 
@@ -78,11 +106,70 @@ def update_client(client_id: int, body: ClientUpdate, db: DbSession, user: Curre
         data.pop("full_name", None)
     if "email" in data and data["email"] is not None:
         data["email"] = str(data["email"])
+    if "phone" in data and data["phone"] is not None:
+        data["phone"] = _normalize_phone(data["phone"])
+        phone = data["phone"]
+        if phone:
+            dup = db.query(Client).filter(Client.phone == phone, Client.id != c.id).first()
+            if dup:
+                raise HTTPException(status_code=409, detail="Клиент с таким телефоном уже существует")
     for k, v in data.items():
         setattr(c, k, v)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Клиент с таким телефоном уже существует")
     db.refresh(c)
     return c
+
+
+@router.delete(
+    "/{client_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR))],
+)
+def delete_client(client_id: int, db: DbSession, user: CurrentUser) -> None:
+    c = db.query(Client).filter(Client.id == client_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+    if user.role == UserRole.DOCTOR and c.doctor_user_id != user.id:
+        raise HTTPException(status_code=403, detail="Нет доступа: это не ваш клиент")
+
+    try:
+        for v in list(c.visits):
+            for ph in list(v.photos):
+                try:
+                    fpath = (settings.upload_dir / ph.file_path).resolve()
+                    base = settings.upload_dir.resolve()
+                    fpath.relative_to(base)
+                    if fpath.is_file():
+                        fpath.unlink()
+                except (ValueError, OSError):
+                    pass
+                db.delete(ph)
+            db.delete(v)
+
+        for plan in list(c.care_plans):
+            db.delete(plan)
+
+        db.query(Appointment).filter(Appointment.client_id == client_id).update(
+            {"client_id": None, "guest_name": c.full_name},
+            synchronize_session=False,
+        )
+
+        if c.user_id:
+            portal_user = db.query(User).filter(User.id == c.user_id).first()
+            if portal_user and portal_user.role == UserRole.CLIENT:
+                portal_user.is_active = False
+
+        db.delete(c)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return None
 
 
 @router.get("/{client_id}/visits", response_model=list[VisitOut])

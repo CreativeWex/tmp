@@ -53,7 +53,7 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(Enum(UserRole, native_enum=False, length=20), default=UserRole.CLIENT)
-    phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True, index=True)
     telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -92,7 +92,7 @@ class Client(Base):
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, unique=True)
     full_name: Mapped[str] = mapped_column(String(255))
     birth_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True, index=True)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     allergies: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     contraindications: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -116,6 +116,7 @@ class Visit(Base):
 
     client: Mapped["Client"] = relationship(back_populates="visits")
     photos: Mapped[List["VisitPhoto"]] = relationship(back_populates="visit")
+    care_plans: Mapped[List["CarePlan"]] = relationship(back_populates="visit")
 
 
 class VisitPhoto(Base):
@@ -188,12 +189,14 @@ class CarePlan(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
     doctor_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    visit_id: Mapped[Optional[int]] = mapped_column(ForeignKey("visits.id"), nullable=True, index=True)
     skin_type: Mapped[str] = mapped_column(String(64))
     concerns: Mapped[list] = mapped_column(SQLITE_JSON, default=list)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     client: Mapped["Client"] = relationship(back_populates="care_plans")
+    visit: Mapped[Optional["Visit"]] = relationship(back_populates="care_plans")
     items: Mapped[List["CarePlanItem"]] = relationship(
         back_populates="care_plan",
         cascade="all, delete-orphan",

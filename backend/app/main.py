@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from app.config import settings
 from app.database import Base, SessionLocal, engine
-from app.routers import admin, appointments, auth, care_plans, clients, doctors, notifications, procedures, products, public, reminders
+from app.routers import admin, analytics, appointments, auth, care_plans, clients, doctors, notifications, procedures, products, public, reminders
 from app.seed import seed_if_empty
 
 API_PREFIX = "/api/v1"
@@ -56,6 +56,7 @@ app.include_router(care_plans.router, prefix=API_PREFIX)
 app.include_router(admin.router, prefix=API_PREFIX)
 app.include_router(notifications.router, prefix=API_PREFIX)
 app.include_router(reminders.router, prefix=API_PREFIX)
+app.include_router(analytics.router, prefix=API_PREFIX)
 
 
 @app.get("/health")

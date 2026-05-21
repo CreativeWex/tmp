@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.deps import CurrentUser, DbSession, require_roles
-from app.models import CarePlan, CarePlanItem, Client, RoutinePeriod, UserRole
+from app.models import CarePlan, CarePlanItem, Client, RoutinePeriod, UserRole, Visit
 from app.schemas import (
     CarePlanCreate,
     CarePlanItemOut,
@@ -56,23 +58,33 @@ def recommend(body: RecommendIn, db: DbSession, user: CurrentUser) -> RecommendO
 
 
 @router.get("/clients/{client_id}/care-plans", response_model=list[CarePlanOut])
-def list_client_care_plans(client_id: int, db: DbSession, user: CurrentUser) -> list[CarePlanOut]:
+def list_client_care_plans(
+    client_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    visit_id: Optional[int] = Query(default=None),
+) -> list[CarePlanOut]:
     _get_client(db, user, client_id)
-    plans = (
-        db.query(CarePlan)
-        .filter(CarePlan.client_id == client_id)
-        .order_by(CarePlan.id.desc())
-        .all()
-    )
+    q = db.query(CarePlan).filter(CarePlan.client_id == client_id)
+    if visit_id is not None:
+        q = q.filter(CarePlan.visit_id == visit_id)
+    plans = q.order_by(CarePlan.id.desc()).all()
     return [_serialize_plan(p) for p in plans]
 
 
 @router.post("/care-plans", response_model=CarePlanOut, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR))])
 def create_care_plan(body: CarePlanCreate, db: DbSession, user: CurrentUser) -> CarePlanOut:
-    _get_client(db, user, body.client_id)
+    client = _get_client(db, user, body.client_id)
+
+    if body.visit_id is not None:
+        visit = db.query(Visit).filter(Visit.id == body.visit_id, Visit.client_id == body.client_id).first()
+        if not visit:
+            raise HTTPException(status_code=404, detail="Визит не найден или не принадлежит клиенту")
+
     plan = CarePlan(
         client_id=body.client_id,
         doctor_user_id=user.id,
+        visit_id=body.visit_id,
         skin_type=body.skin_type,
         concerns=body.concerns,
         notes=body.notes,
@@ -144,10 +156,15 @@ def _serialize_plan(plan: CarePlan) -> CarePlanOut:
         )
         for it in sorted(plan.items, key=lambda x: (x.period.value, x.step_order))
     ]
+    visit_date = None
+    if plan.visit and plan.visit.visit_date:
+        visit_date = plan.visit.visit_date.isoformat()
     return CarePlanOut(
         id=plan.id,
         client_id=plan.client_id,
         doctor_user_id=plan.doctor_user_id,
+        visit_id=plan.visit_id,
+        visit_date=visit_date,
         skin_type=plan.skin_type,
         concerns=list(plan.concerns or []),
         notes=plan.notes,

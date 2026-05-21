@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { absoluteFileUrl, apiJson } from '@/lib/api'
 import type { CarePlan, Client, Product, Visit, VisitPhoto } from '@/lib/types'
@@ -12,11 +12,16 @@ const CONCERNS_OPTS = ['acne', 'pigmentation', 'rosacea', 'wrinkles', 'dryness']
 
 type CompareSlot = { visitId: number; photoId: number }
 
+function normalizePhone(s: string): string {
+  return s.trim().replace(/[\s\-\(\)]/g, '')
+}
+
 export default function ClientDetailPage() {
   const { id } = useParams()
   const clientId = Number(id)
   const qc = useQueryClient()
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [tab, setTab] = useState('profile')
   const [visitDate, setVisitDate] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [visitNotes, setVisitNotes] = useState('')
@@ -25,6 +30,7 @@ export default function ClientDetailPage() {
   const [concerns, setConcerns] = useState<string[]>(['dryness'])
   const [reco, setReco] = useState<Product[]>([])
   const [planId, setPlanId] = useState<number | null>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const clientQ = useQuery({
     queryKey: ['client', clientId],
@@ -88,7 +94,19 @@ export default function ClientDetailPage() {
         }),
       })
     },
-    onSuccess: (p) => setPlanId(p.id),
+    onSuccess: (p) => {
+      setPlanId(p.id)
+      void qc.invalidateQueries({ queryKey: ['care-plans', clientId] })
+    },
+  })
+
+  const deleteClient = useMutation({
+    mutationFn: () => apiJson<void>(`/clients/${clientId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['clients'] })
+      void qc.invalidateQueries({ queryKey: ['dashboard'] })
+      navigate('/app/clients', { replace: true })
+    },
   })
 
   const c = clientQ.data
@@ -137,24 +155,40 @@ export default function ClientDetailPage() {
     )
   }
 
-  if (isClient && c && c.user_id !== user?.id) {
-    return (
-      <Card>
-        <CardContent className="py-6 text-sm text-zinc-500">
-          Нет доступа к этой карточке.{' '}
-          <Link to="/app" className="font-medium text-brand-600 hover:underline">
-            На главную
-          </Link>
-        </CardContent>
-      </Card>
-    )
-  }
-
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-zinc-900">{c?.full_name ?? '…'}</h1>
-        <p className="text-sm text-zinc-500">Карточка клиента #{clientId}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">{c?.full_name ?? '…'}</h1>
+          <p className="text-sm text-zinc-500">Карточка клиента #{clientId}</p>
+        </div>
+        {canEdit ? (
+          <div>
+            {showDeleteConfirm ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-zinc-600 dark:text-zinc-400">Удалить клиента и всю историю?</span>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => deleteClient.mutate()}
+                  disabled={deleteClient.isPending}
+                >
+                  Удалить
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setShowDeleteConfirm(false)}>
+                  Отмена
+                </Button>
+              </div>
+            ) : (
+              <Button size="sm" variant="ghost" onClick={() => setShowDeleteConfirm(true)} className="text-red-500 hover:text-red-700">
+                Удалить клиента
+              </Button>
+            )}
+            {deleteClient.isError ? (
+              <p className="mt-1 text-xs text-red-600">{(deleteClient.error as Error).message}</p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <Tabs
@@ -196,7 +230,7 @@ export default function ClientDetailPage() {
                     value={visitNotes}
                     onChange={(e) => setVisitNotes(e.target.value)}
                     placeholder="Жалобы клиента, что делали на приёме, рекомендации…"
-                    className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-brand-500/30 placeholder:text-zinc-400 focus:border-brand-500 focus:ring-2"
+                    className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 dark:text-zinc-100 px-3 py-2 text-sm outline-none ring-brand-500/30 placeholder:text-zinc-400 focus:border-brand-500 focus:ring-2"
                   />
                 </div>
                 {addVisit.isError ? (
@@ -227,8 +261,8 @@ export default function ClientDetailPage() {
                 <h2 className="text-sm font-medium">Сравнение (вручную)</h2>
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2">
-                <CompareSlot clientId={clientId} slot={compare[0]} />
-                <CompareSlot clientId={clientId} slot={compare[1]} />
+                <CompareSlotView clientId={clientId} slot={compare[0]} />
+                <CompareSlotView clientId={clientId} slot={compare[1]} />
               </CardContent>
             </Card>
           ) : null}
@@ -240,79 +274,82 @@ export default function ClientDetailPage() {
       ) : null}
 
       {tab === 'care' && canEdit ? (
-        <Card>
-          <CardHeader>
-            <h2 className="text-sm font-medium">Подбор и PDF-схема</h2>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Тип кожи</Label>
-                <select
-                  className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm"
-                  value={skin}
-                  onChange={(e) => setSkin(e.target.value as (typeof SKIN)[number])}
-                >
-                  {SKIN.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>Задачи</Label>
-                <div className="flex flex-wrap gap-2">
-                  {CONCERNS_OPTS.map((x) => (
-                    <button
-                      key={x}
-                      type="button"
-                      onClick={() => toggleConcern(x)}
-                      className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ${
-                        concerns.includes(x)
-                          ? 'bg-brand-600 text-white ring-brand-600'
-                          : 'bg-white text-zinc-600 ring-zinc-200'
-                      }`}
-                    >
-                      {x}
-                    </button>
-                  ))}
+        <div className="space-y-6">
+          <CareHistoryView clientId={clientId} visits={visitsQ.data ?? []} />
+          <Card>
+            <CardHeader>
+              <h2 className="text-sm font-medium">Подбор и PDF-схема</h2>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Тип кожи</Label>
+                  <select
+                    className="h-10 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 dark:text-zinc-100 px-3 text-sm"
+                    value={skin}
+                    onChange={(e) => setSkin(e.target.value as (typeof SKIN)[number])}
+                  >
+                    {SKIN.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Задачи</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {CONCERNS_OPTS.map((x) => (
+                      <button
+                        key={x}
+                        type="button"
+                        onClick={() => toggleConcern(x)}
+                        className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ${
+                          concerns.includes(x)
+                            ? 'bg-brand-600 text-white ring-brand-600'
+                            : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 ring-zinc-200 dark:ring-zinc-700'
+                        }`}
+                      >
+                        {x}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => recommend.mutate()} disabled={recommend.isPending}>
-                Подобрать топ-3
-              </Button>
-              <Button variant="outline" onClick={() => createPlan.mutate()} disabled={!reco.length || createPlan.isPending}>
-                Создать план ухода
-              </Button>
-              {planId ? (
-                <Button variant="outline" onClick={() => void downloadPdf()}>
-                  Скачать PDF
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => recommend.mutate()} disabled={recommend.isPending}>
+                  Подобрать топ-3
                 </Button>
+                <Button variant="outline" onClick={() => createPlan.mutate()} disabled={!reco.length || createPlan.isPending}>
+                  Создать план ухода
+                </Button>
+                {planId ? (
+                  <Button variant="outline" onClick={() => void downloadPdf()}>
+                    Скачать PDF
+                  </Button>
+                ) : null}
+              </div>
+              {reco.length ? (
+                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800 rounded-xl border border-zinc-100 dark:border-zinc-800">
+                  {reco.map((p) => (
+                    <li key={p.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                      <span className="font-medium text-zinc-900 dark:text-zinc-100">{p.name}</span>
+                      <span className="text-xs text-zinc-500">{p.skin_types.join(', ')}</span>
+                    </li>
+                  ))}
+                </ul>
               ) : null}
-            </div>
-            {reco.length ? (
-              <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-100">
-                {reco.map((p) => (
-                  <li key={p.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                    <span className="font-medium text-zinc-900">{p.name}</span>
-                    <span className="text-xs text-zinc-500">{p.skin_types.join(', ')}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {recommend.isError ? <p className="text-sm text-red-600">{(recommend.error as Error).message}</p> : null}
-            {createPlan.isError ? <p className="text-sm text-red-600">{(createPlan.error as Error).message}</p> : null}
-          </CardContent>
-        </Card>
+              {recommend.isError ? <p className="text-sm text-red-600">{(recommend.error as Error).message}</p> : null}
+              {createPlan.isError ? <p className="text-sm text-red-600">{(createPlan.error as Error).message}</p> : null}
+            </CardContent>
+          </Card>
+        </div>
       ) : null}
     </div>
   )
 }
 
-function CompareSlot({ clientId, slot }: { clientId: number; slot: CompareSlot }) {
+function CompareSlotView({ clientId, slot }: { clientId: number; slot: CompareSlot }) {
   const q = useQuery({
     queryKey: ['photos', clientId, slot.visitId],
     queryFn: () => apiJson<VisitPhoto[]>(`/clients/${clientId}/visits/${slot.visitId}/photos`),
@@ -320,6 +357,39 @@ function CompareSlot({ clientId, slot }: { clientId: number; slot: CompareSlot }
   const ph = q.data?.find((p) => p.id === slot.photoId)
   const url = ph ? absoluteFileUrl(ph.url) : ''
   return <img src={url} alt="" className="max-h-80 w-full rounded-lg object-contain ring-1 ring-zinc-100" />
+}
+
+function CareHistoryView({ clientId, visits }: { clientId: number; visits: Visit[] }) {
+  const plansQ = useQuery({
+    queryKey: ['care-plans', clientId],
+    queryFn: () => apiJson<CarePlan[]>(`/clients/${clientId}/care-plans`),
+  })
+
+  const plansWithVisit = (plansQ.data ?? []).filter((p) => p.visit_id !== null)
+
+  if (plansWithVisit.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader>
+        <h2 className="text-sm font-medium">История планов ухода по визитам</h2>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {plansWithVisit.map((plan) => {
+          const visit = visits.find((v) => v.id === plan.visit_id)
+          const dateStr = plan.visit_date ?? visit?.visit_date ?? `#${plan.visit_id}`
+          return (
+            <div key={plan.id} className="rounded-lg border border-zinc-100 dark:border-zinc-800 p-3 text-sm">
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">
+                Визит {dateStr} → план #{plan.id}
+              </p>
+              <p className="text-xs text-zinc-500">Тип кожи: {plan.skin_type} · {plan.concerns.join(', ')}</p>
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
 }
 
 function ProfileCard({
@@ -345,7 +415,7 @@ function ProfileCard({
   const save = useMutation({
     mutationFn: () => {
       const payload: Record<string, string | null> = {
-        phone: phone.trim() || null,
+        phone: normalizePhone(phone) || null,
         email: email.trim() || null,
         birth_date: birthDate || null,
         allergies: allergies.trim() || null,
@@ -370,7 +440,7 @@ function ProfileCard({
     return (
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <h2 className="text-sm font-medium text-zinc-900">Контакты и анамнез</h2>
+          <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Контакты и анамнез</h2>
           {canEdit ? (
             <button
               type="button"
@@ -411,7 +481,7 @@ function ProfileCard({
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <h2 className="text-sm font-medium text-zinc-900">Редактирование профиля</h2>
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Редактирование профиля</h2>
         <div className="flex gap-2">
           <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
             Сохранить
@@ -466,7 +536,7 @@ function ProfileCard({
             rows={2}
             value={allergies}
             onChange={(e) => setAllergies(e.target.value)}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-brand-500/30 focus:border-brand-500 focus:ring-2"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 dark:text-zinc-100 px-3 py-2 text-sm outline-none ring-brand-500/30 focus:border-brand-500 focus:ring-2"
           />
         </div>
         <div className="space-y-2 sm:col-span-2">
@@ -476,7 +546,7 @@ function ProfileCard({
             rows={2}
             value={contra}
             onChange={(e) => setContra(e.target.value)}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-brand-500/30 focus:border-brand-500 focus:ring-2"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 dark:text-zinc-100 px-3 py-2 text-sm outline-none ring-brand-500/30 focus:border-brand-500 focus:ring-2"
           />
         </div>
         {save.isError ? (
@@ -539,12 +609,15 @@ function ClientCareView({ clientId }: { clientId: number }) {
             const morning = plan.items.filter((i) => i.period === 'morning')
             const evening = plan.items.filter((i) => i.period === 'evening')
             return (
-              <div key={plan.id} className="space-y-3 rounded-xl border border-zinc-100 p-4">
+              <div key={plan.id} className="space-y-3 rounded-xl border border-zinc-100 dark:border-zinc-800 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-sm">
-                    <p className="font-medium text-zinc-900">Тип кожи: {plan.skin_type}</p>
+                    <p className="font-medium text-zinc-900 dark:text-zinc-100">Тип кожи: {plan.skin_type}</p>
                     {plan.concerns.length ? (
                       <p className="text-xs text-zinc-500">Задачи: {plan.concerns.join(', ')}</p>
+                    ) : null}
+                    {plan.visit_date ? (
+                      <p className="text-xs text-brand-600">Назначен в визите {plan.visit_date}</p>
                     ) : null}
                   </div>
                   <Button size="sm" variant="outline" onClick={() => void downloadPdf(plan.id)}>
@@ -571,7 +644,7 @@ function ClientCareView({ clientId }: { clientId: number }) {
             <div className="space-y-2">
               <Label>Тип кожи</Label>
               <select
-                className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm"
+                className="h-10 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 dark:text-zinc-100 px-3 text-sm"
                 value={skin}
                 onChange={(e) => setSkin(e.target.value as (typeof SKIN)[number])}
               >
@@ -593,7 +666,7 @@ function ClientCareView({ clientId }: { clientId: number }) {
                     className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ${
                       concerns.includes(x)
                         ? 'bg-brand-600 text-white ring-brand-600'
-                        : 'bg-white text-zinc-600 ring-zinc-200'
+                        : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 ring-zinc-200 dark:ring-zinc-700'
                     }`}
                   >
                     {x}
@@ -606,13 +679,13 @@ function ClientCareView({ clientId }: { clientId: number }) {
             Подобрать топ-3
           </Button>
           {reco.length ? (
-            <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-100">
+            <ul className="divide-y divide-zinc-100 dark:divide-zinc-800 rounded-xl border border-zinc-100 dark:border-zinc-800">
               {reco.map((p) => (
                 <li
                   key={p.id}
                   className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <span className="font-medium text-zinc-900">{p.name}</span>
+                  <span className="font-medium text-zinc-900 dark:text-zinc-100">{p.name}</span>
                   <span className="text-xs text-zinc-500">{p.skin_types.join(', ')}</span>
                 </li>
               ))}
@@ -632,7 +705,7 @@ function ClientCareView({ clientId }: { clientId: number }) {
 
 function RoutineList({ title, items }: { title: string; items: CarePlan['items'] }) {
   return (
-    <div className="space-y-2 rounded-lg bg-zinc-50 p-3">
+    <div className="space-y-2 rounded-lg bg-zinc-50 dark:bg-zinc-800 p-3">
       <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">{title}</p>
       {items.length === 0 ? (
         <p className="text-xs text-zinc-400">—</p>
@@ -640,7 +713,7 @@ function RoutineList({ title, items }: { title: string; items: CarePlan['items']
         <ol className="space-y-1 text-sm">
           {items.map((it) => (
             <li key={it.id} className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-zinc-900">
+              <span className="text-zinc-900 dark:text-zinc-100">
                 {it.step_order + 1}. {it.product?.name ?? `#${it.product_id}`}
               </span>
               {it.frequency ? <span className="text-xs text-zinc-500">{it.frequency}</span> : null}
@@ -667,13 +740,23 @@ function VisitCard({
   toggleCompare: (visitId: number, photoId: number) => void
   onRefresh: () => void
 }) {
+  const qc = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [editDate, setEditDate] = useState(visit.visit_date)
   const [editNotes, setEditNotes] = useState(visit.notes ?? '')
+  const [showCareForm, setShowCareForm] = useState(false)
+  const [careSkin, setCareSkin] = useState<(typeof SKIN)[number]>('combination')
+  const [careConcerns, setCareConcerns] = useState<string[]>(['dryness'])
+  const [careReco, setCareReco] = useState<Product[]>([])
 
   const photosQ = useQuery({
     queryKey: ['photos', clientId, visit.id],
     queryFn: () => apiJson<VisitPhoto[]>(`/clients/${clientId}/visits/${visit.id}/photos`),
+  })
+
+  const visitPlansQ = useQuery({
+    queryKey: ['care-plans', clientId, 'visit', visit.id],
+    queryFn: () => apiJson<CarePlan[]>(`/clients/${clientId}/care-plans?visit_id=${visit.id}`),
   })
 
   const upload = useMutation({
@@ -714,6 +797,47 @@ function VisitCard({
     onSuccess: onRefresh,
   })
 
+  const careRecommend = useMutation({
+    mutationFn: () =>
+      apiJson<{ products: Product[] }>('/recommendations', {
+        method: 'POST',
+        body: JSON.stringify({ client_id: clientId, skin_type: careSkin, concerns: careConcerns }),
+      }),
+    onSuccess: (d) => setCareReco(d.products),
+  })
+
+  const createVisitPlan = useMutation({
+    mutationFn: () => {
+      const items = careReco.map((p, i) => ({
+        product_id: p.id,
+        period: i % 2 === 0 ? ('morning' as const) : ('evening' as const),
+        step_order: Math.floor(i / 2),
+        frequency: 'ежедневно',
+      }))
+      return apiJson<CarePlan>('/care-plans', {
+        method: 'POST',
+        body: JSON.stringify({
+          client_id: clientId,
+          visit_id: visit.id,
+          skin_type: careSkin,
+          concerns: careConcerns,
+          notes: `Назначено на визите ${visit.visit_date}`,
+          items,
+        }),
+      })
+    },
+    onSuccess: () => {
+      setShowCareForm(false)
+      setCareReco([])
+      void qc.invalidateQueries({ queryKey: ['care-plans', clientId] })
+      void qc.invalidateQueries({ queryKey: ['care-plans', clientId, 'visit', visit.id] })
+    },
+  })
+
+  const toggleCareConcern = (x: string) => {
+    setCareConcerns((prev) => (prev.includes(x) ? prev.filter((y) => y !== x) : [...prev, x]))
+  }
+
   const isSel = (pid: number) => compare.some((s) => s.visitId === visit.id && s.photoId === pid)
 
   return (
@@ -728,13 +852,13 @@ function VisitCard({
                 onChange={(e) => setEditNotes(e.target.value)}
                 placeholder="Заметки врача о визите…"
                 rows={3}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-brand-500/30 placeholder:text-zinc-400 focus:border-brand-500 focus:ring-2"
+                className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 dark:text-zinc-100 px-3 py-2 text-sm outline-none ring-brand-500/30 placeholder:text-zinc-400 focus:border-brand-500 focus:ring-2"
               />
               {save.isError ? <p className="text-xs text-red-600">{(save.error as Error).message}</p> : null}
             </div>
           ) : (
             <>
-              <p className="text-sm font-medium text-zinc-900">Визит {visit.visit_date}</p>
+              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Визит {visit.visit_date}</p>
               {visit.notes ? (
                 <p className="mt-1 whitespace-pre-wrap text-xs text-zinc-500">{visit.notes}</p>
               ) : (
@@ -768,6 +892,13 @@ function VisitCard({
                   <button type="button" onClick={() => setEditing(true)} className="text-brand-600 hover:underline">
                     Редактировать
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowCareForm((v) => !v)}
+                    className="text-brand-600 hover:underline"
+                  >
+                    Назначить уход
+                  </button>
                   <label className="cursor-pointer text-brand-600 hover:underline">
                     Загрузить фото
                     <input
@@ -796,7 +927,89 @@ function VisitCard({
           </div>
         ) : null}
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {showCareForm ? (
+          <div className="rounded-lg border border-brand-100 bg-brand-50/30 dark:bg-zinc-800 p-4 space-y-3">
+            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Назначить уход для визита</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Тип кожи</Label>
+                <select
+                  className="h-9 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 dark:text-zinc-100 px-3 text-sm"
+                  value={careSkin}
+                  onChange={(e) => setCareSkin(e.target.value as (typeof SKIN)[number])}
+                >
+                  {SKIN.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>Задачи</Label>
+                <div className="flex flex-wrap gap-1">
+                  {CONCERNS_OPTS.map((x) => (
+                    <button
+                      key={x}
+                      type="button"
+                      onClick={() => toggleCareConcern(x)}
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${
+                        careConcerns.includes(x)
+                          ? 'bg-brand-600 text-white ring-brand-600'
+                          : 'bg-white dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 ring-zinc-200 dark:ring-zinc-600'
+                      }`}
+                    >
+                      {x}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => careRecommend.mutate()} disabled={careRecommend.isPending}>
+                Подобрать топ-3
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => createVisitPlan.mutate()}
+                disabled={!careReco.length || createVisitPlan.isPending}
+              >
+                Сохранить как план
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => { setShowCareForm(false); setCareReco([]) }}>
+                Отмена
+              </Button>
+            </div>
+            {careReco.length ? (
+              <ul className="divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-100 dark:border-zinc-800 text-sm">
+                {careReco.map((p) => (
+                  <li key={p.id} className="px-3 py-2 flex justify-between">
+                    <span className="font-medium">{p.name}</span>
+                    <span className="text-xs text-zinc-500">{p.skin_types.join(', ')}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {createVisitPlan.isError ? (
+              <p className="text-xs text-red-600">{(createVisitPlan.error as Error).message}</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {(visitPlansQ.data?.length ?? 0) > 0 ? (
+          <div className="rounded-lg border border-zinc-100 dark:border-zinc-800 p-3 space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Назначенный уход</p>
+            {visitPlansQ.data?.map((plan) => {
+              const morning = plan.items.filter((i) => i.period === 'morning')
+              const evening = plan.items.filter((i) => i.period === 'evening')
+              return (
+                <div key={plan.id} className="grid gap-2 sm:grid-cols-2">
+                  <RoutineList title="Утро" items={morning} />
+                  <RoutineList title="Вечер" items={evening} />
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-5">
           {photosQ.data?.map((ph) => (
             <button
@@ -812,7 +1025,7 @@ function VisitCard({
           ))}
         </div>
         {photosQ.data?.length ? (
-          <p className="mt-2 text-xs text-zinc-400">Нажмите до двух снимков для блока сравнения ниже</p>
+          <p className="text-xs text-zinc-400">Нажмите до двух снимков для блока сравнения ниже</p>
         ) : null}
       </CardContent>
     </Card>

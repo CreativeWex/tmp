@@ -225,6 +225,7 @@ class CarePlanCreate(BaseModel):
     concerns: List[str] = Field(default_factory=list)
     notes: Optional[str] = None
     items: List[CarePlanItemIn]
+    visit_id: Optional[int] = None
 
 
 class CarePlanItemOut(BaseModel):
@@ -244,6 +245,8 @@ class CarePlanOut(BaseModel):
     id: int
     client_id: int
     doctor_user_id: int
+    visit_id: Optional[int] = None
+    visit_date: Optional[str] = None
     skin_type: str
     concerns: List[str]
     notes: Optional[str]
@@ -310,3 +313,24 @@ class UpcomingBirthdayOut(BaseModel):
     full_name: str
     birth_date: date
     days_until: int
+
+
+class AnalyticsPointOut(BaseModel):
+    date: str
+    count: int
+
+
+class StatusBucketOut(BaseModel):
+    status: str
+    count: int
+
+
+class ProcedureCountOut(BaseModel):
+    procedure_id: int
+    name: str
+    count: int
+
+
+class AgeBucketOut(BaseModel):
+    bucket: str
+    count: int
